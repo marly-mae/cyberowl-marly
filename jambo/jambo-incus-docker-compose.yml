@@ -1,0 +1,203 @@
+name: "incus"
+services:
+  logstash:
+    image: 406512544787.dkr.ecr.eu-west-2.amazonaws.com/cyberowl.io/incus/logstash:7.16.1-6.9.3
+    container_name: owl-logstash-compose-container
+    hostname: owl-logstash-host
+    user: "root"
+    restart: unless-stopped
+    ports:
+      - "5044:5044"
+      - "5045:5045"
+      - "9090:9090"
+      - "9999:9999"
+    environment:
+      ApplianceLocation: "JAMBO-001"
+      TenantCode: "jambo"
+    volumes:
+      - type: bind
+        source: /var/incus/config/logstash/
+        target: /usr/share/logstash/config/
+      - type: bind
+        source: /var/incus/logs/
+        target: /usr/share/logstash/logs/
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  seedbox:
+    image: 406512544787.dkr.ecr.eu-west-2.amazonaws.com/cyberowl.io/incus/seedbox:0.0.3
+    container_name: owl-seedbox-compose-container
+    hostname: owl-seedbox-host
+    user: "root"
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - type: bind
+        source: /var/incus/config/seedbox/html/
+        target: /usr/share/nginx/html/
+      - type: bind
+        source: /var/incus/config/seedbox/conf/
+        target: /etc/nginx/
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  tshark:
+    image: 406512544787.dkr.ecr.us-west-2.amazonaws.com/cyberowl/incus-tshark-processor:release-0.0.1-b4_2021-10-27_80eb4df1bfd
+    container_name: owl-tshark-compose-container
+    hostname: owl-tshark-host
+    user: "root"
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      ApplianceLocation: "JAMBO-001"
+      TenantCode: "jambo"
+    volumes:
+      - type: bind
+        source: /var/incus/config/tshark/config.yaml
+        target: /opt/tshark/runtime/config.yaml
+    cap_add:
+      - NET_ADMIN
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  packetbeat:
+    image: docker.elastic.co/beats/packetbeat-oss:7.3.2
+    container_name: owl-packetbeat-compose-container
+    hostname: owl-packetbeat-host
+    user: "root"
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      ApplianceLocation: "JAMBO-001"
+      ELASTIC_CONTAINER: "true"
+      TenantCode: "jambo"
+    volumes:
+      - type: bind
+        source: /var/incus/config/packetbeat/packetbeat.yml
+        target: /usr/share/packetbeat/packetbeat.yml
+    cap_add:
+      - NET_ADMIN
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  tzsp:
+    image: 406512544787.dkr.ecr.eu-west-2.amazonaws.com/cyberowl.io/incus/tzsp:1.0.0
+    container_name: owl-tzsp-compose-container
+    user: "root"
+    restart: unless-stopped
+    ports:
+      - "37008:37008/udp"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  dashboard:
+    image: dashboard-service:latest
+    container_name: owl-dashboard-service-compose-container
+    user: "1002:1002"
+    restart: unless-stopped
+    depends_on:
+      - logstash
+    environment:
+      ApplianceLocation: "JAMBO-001"
+      ServiceHost: "0.0.0.0"
+      ServicePort: "8080"
+      TLSPort: "8086"
+      TLSCert: "/cert/fullchain.pem"
+      TLSKey: "/cert/privkey.pem"
+      DbPath: "/db"
+      DbName: "masters-dashboard-service"
+      DbBusyTimeout: "5000"
+      LogstashHost: "logstash"
+      LogstashPort: 9090
+      BinariesPath: "/binaries"
+      FileWatchDirectory: "/config"
+      OsVersionsCsvFile: "OSVersions.csv"
+      NotificationSettingsFile: "notificationSettings.json"
+      MetadataPath: "config/metadata.json"
+      GOOGLE_APPLICATION_CREDENTIALS: "/db/vessel-service-account-key.json"
+      TenantCode: "jambo"
+      CanonicalUrl: "https://dashboard.jambo.cyberowl.io:8086"
+#      OtelUrl: "http://otel-collector:4317"
+      RUST_LOG: "masters_dashboard_service=debug"
+    volumes:
+      - type: bind
+        source: /var/incus/config/dashboard-service/binaries/
+        target: /binaries
+      - type: bind
+        source: /var/incus/config/dashboard-service/db/
+        target: /db
+      - type: bind
+        source: /var/incus/config/dashboard-service/cert/
+        target: /cert
+      - type: bind
+        source: /var/incus/config/dashboard-service/config/
+        target: /config
+      - type: bind
+        source: /var/incus/config/dashboard-service/config/alert_messages.json
+        target: /app/static/config/alert_messages.json
+    ports:
+      - "8085:8080"
+      - "8086:8086"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  thalamus:
+    image: thalamus:latest
+    restart: unless-stopped
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AGGREGATE_TIME=60
+      - MAX_PACKAGES=4000000
+      - RUST_LOG=thalamus=debug
+      - DASHBOARD_URL=http://dashboard:8080
+      - FILE_WATCH_DIR=config
+      - NETWORK_PATTERN_FILE=network_patterns.json
+      - SERVICES_FILE=services.csv
+#      - OTEL_URL=http://otel-collector:4317
+    depends_on:
+      - redis
+    volumes:
+      - type: bind
+        source: /var/incus/config/thalamus/config/
+        target: /config
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  redis:
+    image: redis:latest
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.92.0
+    command: [ "--config=/etc/otel-collector-config.yaml" ]
+    volumes:
+      - type: bind
+        source: /var/incus/config/otel/otel-collector-config.yaml
+        target: /etc/otel-collector-config.yaml
+      - type: bind
+        source: /var/incus/config/otel/cert/
+        target: /usr/share/otel/config/certs
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+
